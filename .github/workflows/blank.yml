@@ -2,7 +2,7 @@ name: Continuous Persistent VPS
 
 on:
   schedule:
-    - cron: '0 */5 * * *'  # Every 5 hours (GitHub cron can't do 5h30m exactly, see note below)
+    - cron: '0 */5 * * *'  # Every 5 hours (approx 5h30m handled by sleep)
   workflow_dispatch:
 
 jobs:
@@ -33,7 +33,7 @@ jobs:
         run: |
           curl -fsSL https://tailscale.com/install.sh | sh
 
-      - name: Restore backup files
+      - name: Restore backup safely
         run: |
           if [ -f ./backup/backup.zip ]; then
             unzip -o ./backup/backup.zip -d /
@@ -41,12 +41,14 @@ jobs:
             echo "No backup found, starting fresh"
           fi
 
-      - name: Restore Tailscale state
+      - name: Restore Tailscale state safely
         run: |
           if [ -f /opt/vps-backup/data/tailscaled.state ]; then
             sudo mkdir -p /var/lib/tailscale
             sudo cp /opt/vps-backup/data/tailscaled.state /var/lib/tailscale/tailscaled.state
             sudo chmod 600 /var/lib/tailscale/tailscaled.state
+          else
+            echo "No Tailscale state found, skipping restore"
           fi
 
       - name: Start Tailscale
@@ -73,25 +75,33 @@ jobs:
         with:
           shell: /bin/bash
 
-      - name: Show Tailscale IP and tmate info
+      - name: Show Tailscale IP and tmate info safely
         run: |
           echo "🔗 Tailscale IP:"
           tailscale ip -4 || echo "Tailscale IP not found"
           echo ""
           echo "💻 tmate SSH session:"
-          cat $HOME/.tmate.sock/ssh
+          if [ -f $HOME/.tmate.sock/ssh ]; then
+            cat $HOME/.tmate.sock/ssh
+          else
+            echo "tmate SSH info not found yet"
+          fi
 
       - name: Sleep to keep VPS alive
         run: sleep 19800  # 5h30m
 
-      - name: Backup VPS data and tailscale state
+      - name: Backup VPS data and tailscale state safely
         run: |
           sudo mkdir -p /opt/vps-backup/data
-          sudo cp /var/lib/tailscale/tailscaled.state /opt/vps-backup/data/
+          if [ -f /var/lib/tailscale/tailscaled.state ]; then
+            sudo cp /var/lib/tailscale/tailscaled.state /opt/vps-backup/data/
+          fi
           sudo chown -R $USER:$USER /opt/vps-backup
-          zip -r backup.zip /opt/vps-backup
+          if [ -d /opt/vps-backup ]; then
+            zip -r backup.zip /opt/vps-backup || echo "zip failed"
+          fi
 
-      - name: Upload VPS backup artifact
+      - name: Upload VPS backup artifact safely
         uses: actions/upload-artifact@v4
         with:
           name: vps-backup
